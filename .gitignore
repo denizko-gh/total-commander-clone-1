@@ -1,0 +1,25 @@
+# PyInstaller / packaging output (regenerated locally)
+build/
+dist/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+# Virtual environment (scripts/install.sh uses .venv at repo root)
+.venv/
+venv/
+env/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+
+# App local config (bookmarks, libraries, tags, panel state, preferences)
+# Written next to the project in dev; do not commit personal paths or metadata.
+state.json
+settings.json
