@@ -13,7 +13,7 @@ from PyQt5.QtWidgets import (
     QFrame, QHBoxLayout, QPushButton, QVBoxLayout, QWidget,
     QMenu, QMessageBox, QInputDialog, QApplication, QLabel,
     QDialog, QFormLayout, QLineEdit, QDialogButtonBox, QFileDialog,
-    QStyle, QTabWidget,
+    QStyle, QTabWidget, QStackedWidget,
 )
 from PyQt5.QtCore import Qt, QUrl, QTimer
 from PyQt5.QtGui import QKeySequence, QDesktopServices, QIcon
@@ -23,6 +23,7 @@ from file_operations import copyFiles, moveFiles, deleteFiles, renameFile
 from batch_rename_dialog import BatchRenameDialog
 from bookmarks_panel import BookmarksPanel
 from libraries_panel import LibrariesPanel
+from library_browser_panel import LibraryBrowserPanel
 from library_dialogs import LibraryRootDialog, TagAssignmentDialog
 from library_manager import LibraryManager
 from settings_manager import SettingsManager
@@ -149,6 +150,24 @@ class FileManagerApp(QMainWindow):
         self._action_swap_panes.triggered.connect(self._onSwapPanels)
         view_menu.addAction(self._action_swap_panes)
 
+        view_menu.addSeparator()
+        self._action_toggle_library_active = QAction("Toggle Library Browser (Active Panel)\tCtrl+Shift+L", self)
+        self._action_toggle_library_active.triggered.connect(self._onToggleLibraryBrowserActive)
+        view_menu.addAction(self._action_toggle_library_active)
+
+        self._action_toggle_library_left = QAction("Toggle Library Browser (Left)", self)
+        self._action_toggle_library_left.triggered.connect(lambda: self._toggleLibraryBrowser("left"))
+        view_menu.addAction(self._action_toggle_library_left)
+
+        self._action_toggle_library_right = QAction("Toggle Library Browser (Right)", self)
+        self._action_toggle_library_right.triggered.connect(lambda: self._toggleLibraryBrowser("right"))
+        view_menu.addAction(self._action_toggle_library_right)
+
+        view_menu.addSeparator()
+        self._action_mirror = QAction("Mirror Active Folder to Other Panel\tCtrl+Shift+M", self)
+        self._action_mirror.triggered.connect(self._onMirrorToOther)
+        view_menu.addAction(self._action_mirror)
+
         # --- Bookmarks Menu ---
         self._bookmarks_menu = menu_bar.addMenu("&Bookmarks")
         self._rebuildBookmarksMenu()
@@ -240,7 +259,9 @@ class FileManagerApp(QMainWindow):
     # --------------------------------------------------------
     # Method: _initPanels
     # Purpose: Creates the layout: bookmarks pane | dual file panes
-    #          with a center column of Copy/Move/Swap buttons.
+    #          with a center column of Copy/Move/Swap/Mirror buttons.
+    #          Each panel slot is a QStackedWidget that can toggle
+    #          between a FilePanel and a LibraryBrowserPanel.
     # --------------------------------------------------------
     def _initPanels(self):
         central = QWidget()
@@ -253,11 +274,25 @@ class FileManagerApp(QMainWindow):
 
         self._left_panel = FilePanel("left", self)
         self._right_panel = FilePanel("right", self)
+
+        self._left_library_browser = LibraryBrowserPanel("left", self)
+        self._right_library_browser = LibraryBrowserPanel("right", self)
+        self._connectLibraryBrowser(self._left_library_browser, "left")
+        self._connectLibraryBrowser(self._right_library_browser, "right")
+
+        self._left_stack = QStackedWidget()
+        self._left_stack.addWidget(self._left_panel)
+        self._left_stack.addWidget(self._left_library_browser)
+
+        self._right_stack = QStackedWidget()
+        self._right_stack.addWidget(self._right_panel)
+        self._right_stack.addWidget(self._right_library_browser)
+
         self._center_buttons = self._buildCenterButtons()
 
-        panels_layout.addWidget(self._left_panel, 1)
+        panels_layout.addWidget(self._left_stack, 1)
         panels_layout.addWidget(self._center_buttons)
-        panels_layout.addWidget(self._right_panel, 1)
+        panels_layout.addWidget(self._right_stack, 1)
 
         file_panes_widget = QWidget()
         file_panes_widget.setLayout(panels_layout)
@@ -373,6 +408,18 @@ class FileManagerApp(QMainWindow):
         self._lbl_swap.setAlignment(Qt.AlignCenter)
         layout.addWidget(self._lbl_swap)
 
+        layout.addSpacing(16)
+
+        self._btn_mirror = QPushButton("\u229C")
+        self._btn_mirror.setToolTip("Open active folder in the other panel (Ctrl+Shift+M)")
+        self._btn_mirror.setFocusPolicy(Qt.NoFocus)
+        self._btn_mirror.clicked.connect(self._onMirrorToOther)
+        layout.addWidget(self._btn_mirror)
+
+        self._lbl_mirror = QLabel("MIRROR")
+        self._lbl_mirror.setAlignment(Qt.AlignCenter)
+        layout.addWidget(self._lbl_mirror)
+
         layout.addStretch(1)
 
         self._updateDirectionButtons()
@@ -460,6 +507,8 @@ class FileManagerApp(QMainWindow):
             QKeySequence("Ctrl+V"):                       self._onPaste,
             QKeySequence("Ctrl+M"):                       self._onBatchRename,
             QKeySequence("Ctrl+Shift+S"):                 self._onSwapPanels,
+            QKeySequence("Ctrl+Shift+L"):                 self._onToggleLibraryBrowserActive,
+            QKeySequence("Ctrl+Shift+M"):                 self._onMirrorToOther,
         }
 
         for key_seq, callback in shortcuts.items():
@@ -890,6 +939,15 @@ class FileManagerApp(QMainWindow):
         tagged_folders = self._library_manager.getTaggedFolders()
         self._libraries_panel.setData(libraries, tagged_folders, selected_library_id)
 
+        if hasattr(self, "_left_library_browser"):
+            self._left_library_browser.setData(
+                libraries, tagged_folders, self._left_library_browser.selectedLibraryId()
+            )
+        if hasattr(self, "_right_library_browser"):
+            self._right_library_browser.setData(
+                libraries, tagged_folders, self._right_library_browser.selectedLibraryId()
+            )
+
     def _onScanLibraries(self):
         self._library_manager.refreshLibraries()
         self._reloadLibrariesPanel()
@@ -999,10 +1057,12 @@ class FileManagerApp(QMainWindow):
             return
 
         record = self._library_manager.getFolderRecordForPath(folder_path) or {}
+        known_tags = self._library_manager.getAvailableTags()
         dialog = TagAssignmentDialog(
             folder_path,
             existing_tags=record.get("tags", []),
             existing_note=record.get("note", ""),
+            known_tags=known_tags,
             parent=self,
         )
         if dialog.exec_() != QDialog.Accepted:
@@ -1012,6 +1072,81 @@ class FileManagerApp(QMainWindow):
         self._library_manager.assignTagsToFolder(folder_path, values.get("tags", []), values.get("note", ""))
         self._reloadLibrariesPanel(context["library"]["id"])
         self._showStatus(f"Tags updated for: {folder_path}")
+
+    # --------------------------------------------------------
+    # Library Browser Panel (full panel view)
+    # --------------------------------------------------------
+    def _connectLibraryBrowser(self, browser, side):
+        browser.navigateRequested.connect(
+            lambda path: self._onBrowserNavigateRequested(path, side)
+        )
+        browser.navigateInPanelRequested.connect(self._onBrowserNavigateInPanel)
+        browser.switchToFilePanelRequested.connect(
+            lambda: self._toggleLibraryBrowser(side)
+        )
+        browser.addLibraryRequested.connect(self._onAddCurrentFolderToLibrary)
+        browser.scanLibrariesRequested.connect(self._onScanLibraries)
+        browser.assignTagsRequested.connect(self._onAssignCurrentFolderTags)
+
+    def _onBrowserNavigateRequested(self, path, browser_side):
+        if not path or not os.path.isdir(path):
+            self._showStatus("Selected folder is offline or missing.")
+            return
+        stack = self._left_stack if browser_side == "left" else self._right_stack
+        panel = self._left_panel if browser_side == "left" else self._right_panel
+        stack.setCurrentWidget(panel)
+        panel.navigateTo(path)
+        self._setActivePanel(panel)
+        self._showStatus(f"Opened library folder: {path}")
+
+    def _onBrowserNavigateInPanel(self, path, panel_side):
+        if not path or not os.path.isdir(path):
+            self._showStatus("Selected folder is offline or missing.")
+            return
+        panel = self._left_panel if panel_side == "left" else self._right_panel
+        stack = self._left_stack if panel_side == "left" else self._right_stack
+        stack.setCurrentWidget(panel)
+        panel.navigateTo(path)
+        self._showStatus(f"Opened library folder: {path}")
+
+    def _onToggleLibraryBrowserActive(self):
+        if self._active_panel == self._left_panel:
+            self._toggleLibraryBrowser("left")
+        else:
+            self._toggleLibraryBrowser("right")
+
+    def _toggleLibraryBrowser(self, side):
+        stack = self._left_stack if side == "left" else self._right_stack
+        browser = self._left_library_browser if side == "left" else self._right_library_browser
+
+        if stack.currentWidget() == browser:
+            file_panel = self._left_panel if side == "left" else self._right_panel
+            stack.setCurrentWidget(file_panel)
+            self._showStatus("Switched to file panel.")
+        else:
+            self._reloadLibraryBrowser(side)
+            stack.setCurrentWidget(browser)
+            self._showStatus("Switched to library browser.")
+
+    def _reloadLibraryBrowser(self, side):
+        browser = self._left_library_browser if side == "left" else self._right_library_browser
+        libraries = self._library_manager.getLibraries()
+        tagged_folders = self._library_manager.getTaggedFolders()
+        selected_id = browser.selectedLibraryId()
+        browser.setData(libraries, tagged_folders, selected_id)
+
+    # --------------------------------------------------------
+    # Mirror: Open active folder in the other panel
+    # --------------------------------------------------------
+    def _onMirrorToOther(self):
+        if not self._active_panel:
+            return
+        path = self._active_panel.currentPath()
+        if not path or not os.path.isdir(path):
+            self._showStatus("No active folder to mirror.")
+            return
+        self._getInactivePanel().navigateTo(path)
+        self._showStatus(f"Mirrored folder to other panel: {path}")
 
     # --------------------------------------------------------
     # Right-Click Context Menu

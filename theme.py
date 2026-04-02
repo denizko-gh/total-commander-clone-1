@@ -499,7 +499,7 @@ def getDarkThemeStylesheet(base_path=None):
     /* ====================================================== */
     QWidget#filePanel {{
         background-color: {c['panel_bg']};
-        border: 1px solid {c['border']};
+        border: 1px solid {c['overlay0']};
         border-radius: 8px;
     }}
     QWidget#filePanelActive {{
@@ -650,5 +650,32 @@ def getDarkThemeStylesheet(base_path=None):
     }}
     QLabel#batchUnchanged {{
         color: {c['overlay0']};
+    }}
+
+    /* ====================================================== */
+    /* Library Browser Panel                                    */
+    /* ====================================================== */
+    QPushButton#libraryToolButton {{
+        padding: 2px 8px;
+        font-size: 11px;
+        min-height: 22px;
+    }}
+
+    QListWidget {{
+        background-color: {c['panel_bg']};
+        color: {c['text']};
+        border: 1px solid {c['border']};
+        border-radius: 6px;
+        outline: none;
+    }}
+    QListWidget::item {{
+        padding: 4px 6px;
+    }}
+    QListWidget::item:hover {{
+        background-color: {c['hover']};
+    }}
+    QListWidget::item:selected {{
+        background-color: {c['selection']};
+        color: {c['text']};
     }}
     """

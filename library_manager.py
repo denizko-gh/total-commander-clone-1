@@ -19,6 +19,18 @@ LIBRARY_MARKER_VERSION = 1
 
 
 # ------------------------------------------------------------
+# Helper: parse a tag into (category, value) pair.
+# Tags using "category:value" format are split; plain tags
+# return an empty category string.
+# ------------------------------------------------------------
+def parseTagCategory(tag):
+    if ":" in tag:
+        category, _, value = tag.partition(":")
+        return (category.strip(), value.strip())
+    return ("", tag.strip())
+
+
+# ------------------------------------------------------------
 # Helper: normalize a filesystem path for comparisons
 # ------------------------------------------------------------
 def normalizePath(path):

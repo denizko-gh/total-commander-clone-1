@@ -3,10 +3,14 @@ Total Commander Clone - Library Dialogs
 Small dialogs for registering library roots and assigning tags.
 """
 
+from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (
-    QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFormLayout,
-    QHBoxLayout, QLabel, QLineEdit, QPushButton, QVBoxLayout,
+    QComboBox, QCompleter, QDialog, QDialogButtonBox, QFileDialog,
+    QFormLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton,
+    QVBoxLayout,
 )
+
+from library_manager import parseTagCategory
 
 
 # ------------------------------------------------------------
@@ -79,19 +83,24 @@ class LibraryRootDialog(QDialog):
 # ------------------------------------------------------------
 # Class: TagAssignmentDialog
 # Purpose: Capture folder tags and an optional note using a
-#          lightweight metadata editor.
+#          lightweight metadata editor. Shows known categories
+#          and existing tags as autocomplete suggestions.
 # ------------------------------------------------------------
 class TagAssignmentDialog(QDialog):
 
     # --------------------------------------------------------
     # Method: __init__
+    # Input: folder_path (str), existing_tags (list), existing_note (str),
+    #        known_tags (list) - all tags already used across libraries
     # --------------------------------------------------------
-    def __init__(self, folder_path, existing_tags=None, existing_note="", parent=None):
+    def __init__(self, folder_path, existing_tags=None, existing_note="",
+                 known_tags=None, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Assign Tags")
         self.setMinimumWidth(520)
 
         existing_tags = existing_tags or []
+        known_tags = known_tags or []
 
         layout = QVBoxLayout(self)
         form = QFormLayout()
@@ -102,13 +111,37 @@ class TagAssignmentDialog(QDialog):
 
         self._tags_edit = QLineEdit(", ".join(existing_tags))
         self._tags_edit.setPlaceholderText("Example: customer:Acme, industry:Hatchery")
+
+        if known_tags:
+            completer = QCompleter(known_tags, self)
+            completer.setCaseSensitivity(Qt.CaseInsensitive)
+            completer.setFilterMode(Qt.MatchContains)
+            self._tags_edit.setCompleter(completer)
+
         form.addRow("Tags:", self._tags_edit)
 
         self._note_edit = QLineEdit(existing_note or "")
         self._note_edit.setPlaceholderText("Optional note")
         form.addRow("Note:", self._note_edit)
 
-        hint = QLabel("Use comma-separated tags. Example groups: customer:Name, industry:Hatchery, status:Open")
+        categories = set()
+        for tag in known_tags:
+            cat, _ = parseTagCategory(tag)
+            if cat:
+                categories.add(cat)
+
+        if categories:
+            cat_list = ", ".join(sorted(categories))
+            hint_text = (
+                f"Comma-separated tags. Known categories: {cat_list}\n"
+                "Format: category:value (e.g. customer:Acme) or plain tags."
+            )
+        else:
+            hint_text = (
+                "Use comma-separated tags. "
+                "Example groups: customer:Name, industry:Hatchery, status:Open"
+            )
+        hint = QLabel(hint_text)
         hint.setWordWrap(True)
 
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)

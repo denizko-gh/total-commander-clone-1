@@ -5,10 +5,36 @@ file table, sorting, filtering, in-place rename, and drag-and-drop.
 """
 
 import os
+import platform
+import re
 import stat
 import string
+import subprocess
 import time
 from datetime import datetime
+
+
+# Pattern for splitting names into text vs digit runs (natural sort).
+_NATURAL_SORT_SPLIT = re.compile(r"(\d+)")
+
+
+# ------------------------------------------------------------
+# Helper: natural_sort_key
+# Purpose: Sort key so embedded numbers compare numerically
+#          (e.g. KT-167 before KT-1665, file2 before file10).
+#          Each segment is (0, int) or (1, str) so list compare
+#          never mixes bare int with str (e.g. "33112_x" vs "a_1").
+# ------------------------------------------------------------
+def natural_sort_key(name):
+    parts = []
+    for part in _NATURAL_SORT_SPLIT.split(name):
+        if not part:
+            continue
+        if part.isdigit():
+            parts.append((0, int(part)))
+        else:
+            parts.append((1, part.lower()))
+    return parts
 
 
 # ------------------------------------------------------------
@@ -23,7 +49,7 @@ from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTableView, QLineEdit,
     QPushButton, QAbstractItemView, QHeaderView, QFrame, QLabel,
     QStyledItemDelegate, QStyle, QApplication, QComboBox,
-    QFileIconProvider, QFileDialog,
+    QFileIconProvider,
 )
 from PyQt5.QtCore import (
     Qt, QAbstractTableModel, QModelIndex, QVariant, QMimeData,
@@ -32,7 +58,7 @@ from PyQt5.QtCore import (
     QFileInfo,
 )
 from PyQt5.QtGui import (
-    QDrag, QIcon, QPixmap, QPainter, QColor, QKeySequence,
+    QDrag, QDesktopServices, QIcon, QPixmap, QPainter, QColor, QKeySequence,
     QFontMetrics,
 )
 
@@ -156,7 +182,7 @@ class FileSystemModel(QAbstractTableModel):
             except (PermissionError, OSError):
                 continue
 
-        self._entries.sort(key=lambda e: (not e["is_dir"], e["name"].lower()))
+        self._entries.sort(key=lambda e: (not e["is_dir"], natural_sort_key(e["name"])))
         self.endResetModel()
 
     # --------------------------------------------------------
@@ -324,7 +350,7 @@ class FileSortFilterProxy(QSortFilterProxyModel):
 
         col = left.column()
         if col == 0:
-            return left_entry["name"].lower() < right_entry["name"].lower()
+            return natural_sort_key(left_entry["name"]) < natural_sort_key(right_entry["name"])
         elif col == 1:
             return left_entry["size"] < right_entry["size"]
         elif col == 2:
@@ -726,11 +752,11 @@ class FilePanel(QWidget):
         self._btn_browse_folder.setObjectName("navButton")
         self._btn_browse_folder.setFixedSize(30, NAV_BAR_HEIGHT)
         self._btn_browse_folder.setIconSize(QSize(NAV_ICON_SIZE, NAV_ICON_SIZE))
-        self._btn_browse_folder.setToolTip("Browse for folder…")
+        self._btn_browse_folder.setToolTip("Open current folder in system file explorer")
         self._btn_browse_folder.setAutoDefault(False)
         self._btn_browse_folder.setDefault(False)
         self._btn_browse_folder.setIcon(style.standardIcon(QStyle.SP_DirOpenIcon))
-        self._btn_browse_folder.clicked.connect(self._browseFolderAndNavigate)
+        self._btn_browse_folder.clicked.connect(self._openCurrentFolderInSystemExplorer)
 
         path_layout.addWidget(self._path_edit, 1)
         path_layout.addWidget(self._btn_copy_path)
@@ -759,7 +785,7 @@ class FilePanel(QWidget):
         self._btn_up.setToolTip("Up one level (Backspace)")
         self._btn_up.setIcon(style.standardIcon(QStyle.SP_ArrowUp))
         self._btn_home.setToolTip("Home folder")
-        self._btn_home.setIcon(style.standardIcon(QStyle.SP_DirHomeIcon))
+        self._btn_home.setText("\U0001F3E0")
         self._btn_home.clicked.connect(self._goHome)
 
         self._drive_combo = QComboBox()
@@ -919,6 +945,17 @@ class FilePanel(QWidget):
             widget.installEventFilter(self)
 
     # --------------------------------------------------------
+    # Method: _scrollFileTableToTop
+    # Purpose: Resets vertical (and horizontal) scroll after
+    #          opening a folder so the list starts at the top.
+    # --------------------------------------------------------
+    def _scrollFileTableToTop(self):
+        self._table.scrollToTop()
+        hbar = self._table.horizontalScrollBar()
+        if hbar is not None:
+            hbar.setValue(0)
+
+    # --------------------------------------------------------
     # Method: navigateTo
     # Purpose: Loads a directory and pushes it to the history.
     # --------------------------------------------------------
@@ -943,6 +980,7 @@ class FilePanel(QWidget):
         self._updateStatusLabel()
         self._syncDriveCombo(path)
         self.pathChanged.emit(path)
+        QTimer.singleShot(0, self._scrollFileTableToTop)
 
     # --------------------------------------------------------
     # Method: refresh
@@ -1267,15 +1305,18 @@ class FilePanel(QWidget):
                 self._path_edit.setText(parent)
                 self.navigateTo(parent)
 
-    def _browseFolderAndNavigate(self):
-        """Open native folder picker and navigate to the chosen directory."""
-        start = self._source_model.currentPath()
-        if not start or not os.path.isdir(start):
-            start = os.path.expanduser("~") or ""
-        chosen = QFileDialog.getExistingDirectory(self, "Select folder", start)
-        if chosen:
-            self._path_edit.setText(chosen)
-            self.navigateTo(chosen)
+    def _openCurrentFolderInSystemExplorer(self):
+        """Open this panel's current folder in the OS file manager (no dialog)."""
+        path = self._source_model.currentPath()
+        if not path or not os.path.isdir(path):
+            return
+        try:
+            if platform.system() == "Windows":
+                subprocess.Popen(["explorer", os.path.normpath(path)])
+            else:
+                QDesktopServices.openUrl(QUrl.fromLocalFile(path))
+        except OSError:
+            pass
 
     def _onDriveChanged(self, index):
         if index < 0 or not self._drive_combo.isVisible():
